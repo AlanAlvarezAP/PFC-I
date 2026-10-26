@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import networkx as nx
 
 from data.dataParser import process_mepognn_pipeline, load_raw_data
-
+from model.MepoGNN import MepoGNNCore
 
 def create_dgl_graph_from_mepo(raw_cases: np.ndarray, threshold: float = 0.5):
     inf_cases = raw_cases.T
@@ -74,7 +74,7 @@ def plot_dgl_graph(g: dgl.DGLGraph, corr_matrix: np.ndarray, threshold: float = 
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("=" * 60)
-    print("INFORMACION DEL DISPOSITIVO")
+    print("INFORMACION DEL DISPOSITIVO (MEPOGNN)")
     print("=" * 60)
     if device.type == 'cuda':
         print(f"Dispositivo activo: GPU ({torch.cuda.get_device_name(0)})")
@@ -88,47 +88,45 @@ def main():
     split_ratio = (6, 1, 1)
     corr_threshold = 0.5
 
-    dataloaders, static_commute_graph = process_mepognn_pipeline(obs_len=obs_len,pred_len=pred_len,split_ratio=split_ratio,batch_size=batch_size,device=device,verbose=True)
-
-    train_batches = len(dataloaders['train'])
-    val_batches   = len(dataloaders['validate'])
-    test_batches  = len(dataloaders['test'])
-
-    print("ESTADISTICAS DE BATCHES:")
-    print(f"Batches Train({split_ratio[0]} parts): {train_batches} (Muestras = {train_batches * batch_size})")
-    print(f"Batches Val  ({split_ratio[1]} parts): {val_batches} (Muestras = {val_batches * batch_size})")
-    print(f"Batches Test ({split_ratio[2]} parts): {test_batches} (Muestras = {test_batches * batch_size})")
-    print(f"Escalar max_od (Normalizado): {dataloaders['max_od']:.4f}")
+    dataloaders, static_commute_graph = process_mepognn_pipeline(
+        obs_len=obs_len, pred_len=pred_len, split_ratio=split_ratio, 
+        batch_size=batch_size, device=device, verbose=True
+    )
 
     x_od_b, x_node_b, x_sir_b, y_b = next(iter(dataloaders['train']))
 
-    print()
-    print("DIMENSIONES DE TENSORES POR BATCH:")
+    print("\n" + "=" * 60)
+    print("-------- AVANCE 1: VERIFICACION DE TENSORES Mepognn ------------")
+    print("=" * 60)
     print(f"Flujo OD Dinamico (x_od) : {x_od_b.shape} -> [Batch, Obs_Len, Nodos, Nodos]")
     print(f"Atributos Nodos (x_node) : {x_node_b.shape} -> [Batch, Obs_Len, Nodos, Feats]")
-    print(f"Atributos SIR (x_sir)    : {x_sir_b.shape} -> [Batch, Obs_Len, Nodos, SIR_dim]")
-    print(f"Target Futuro (y_true)   : {y_b.shape} -> [Batch, Pred_Len, Nodos, 1]")
+
+    # --- NUEVO: INTEGRACIÓN DEL MODELO NEURONAL CORE ---
+    num_nodes = x_node_b.shape[2]
+    in_feats = x_node_b.shape[-1]
 
     print("\n" + "=" * 60)
-    print("-------- CONSTRUCCION Y ANALISIS DEL GRAFO DGL ------------")
+    print("-------- AVANCE 2: PROPAGACION EN CAPAS ST (MepoGNN) --------")
     print("=" * 60)
+    
+    # Instanciar el modelo core
+    model_mepo = MepoGNNCore(
+        num_nodes=num_nodes, 
+        in_dim=in_feats, 
+        residual_channels=32, 
+        dilation_channels=32
+    ).to(device)
 
+    # Pasar el batch por el modelo (Entrada: Atributos de nodos y matriz de movilidad OD)
+    h_st_mepo = model_mepo(x_node_b, x_od_b)
+    print(f"Salida exitosa de las capas ST (H_ST): {h_st_mepo.shape}")
+    print("Estructura esperada: [Batch, Channels, Nodos, Time]")
+
+    # (Opcional: puedes mantener tu visualizador de grafo DGL estático aquí si deseas)
     raw_data = load_raw_data()
     raw_cases = raw_data['y'].squeeze()
     node_labels = raw_data['locations']
-
     g, corr_matrix = create_dgl_graph_from_mepo(raw_cases, threshold=corr_threshold)
-
-    num_nodes = g.num_nodes()
-    print(f"Grafo DGL Generado: {g}")
-    print(f"Cantidad de Nodos: {num_nodes}")
-    print(f"Cantidad de Aristas (Edges): {g.num_edges()}")
-    
-    density = g.num_edges() / (num_nodes * (num_nodes - 1)) if num_nodes > 1 else 0
-    print(f"Densidad del Grafo: {density:.4f}")
-
-    print()
-    print("Generando graficos del mapa de calor y la topologia del grafo...")
     plot_dgl_graph(g, corr_matrix, threshold=corr_threshold, node_labels=node_labels)
 
 
