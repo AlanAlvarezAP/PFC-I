@@ -81,47 +81,23 @@ def main():
     test_window = 50
     valid_window = 50
 
-    (train_x, train_y, train_x_true, val_x, val_y, val_x_true, 
-     test_x, test_y, test_x_true, S_min, S_max, I_min, I_max, 
-     R_min, R_max, N) = data_processing_japan(
-        loc_list=loc_list, raw_data=df_japan, loc_col=loc_col,
-        test_window=test_window, valid_window=valid_window,
-        history_window=history_window, pred_window=pred_window,
-        slide_step=slide_step, device=device
-    )
+    (train_x, train_y, train_x_true, val_x, val_y, val_x_true, test_x, test_y, test_x_true, S_min, S_max, I_min, I_max, R_min, R_max, N) = data_processing_japan(loc_list=loc_list, raw_data=df_japan, loc_col=loc_col,test_window=test_window, valid_window=valid_window,history_window=history_window, pred_window=pred_window,slide_step=slide_step, device=device)
 
-    print("--- Procesamiento de datos completado con éxito ---")
     print(f"Dimension tensor train_x: {train_x.shape}")
-
-    # --- NUEVO: INTEGRACIÓN DEL MODELO BDSTGNN ---
     print("\n" + "=" * 60)
-    print("-------- AVANCE: PROPAGACION EN BDSTGNN CON DGL ------------")
-    print("=" * 60)
 
-    num_nodes = train_x.shape[1]  # Nodos (Prefecturas)
-    in_feats = train_x.shape[-1]   # Canales/Features (S, I, R)
+    num_nodes = train_x.shape[1]
+    in_feats = train_x.shape[-1]
 
-    # Instanciar el modelo BDSTGNN con DGL
-    model_bdst = BDSTGNNWithDGL(
-        num_nodes=num_nodes,
-        in_feats=in_feats,
-        hidden_dim=32,
-        history_window=history_window,
-        pred_window=pred_window,
-        kernel_size=3
-    ).to(device)
+    model_bdst = BDSTGNNWithDGL(num_nodes=num_nodes,in_feats=in_feats,hidden_dim=32,history_window=history_window,pred_window=pred_window,kernel_size=3).to(device)
 
-    # train_x tiene forma [Samples, Nodes, History, Features]. 
-    # El modelo espera [Batch, History_Window, Nodes, Features], por lo que permutamos:
-    sample_x = train_x[:16].permute(0, 2, 1, 3) # Tomamos un mini-batch de 16 muestras
+    sample_x = train_x[:16].permute(0, 2, 1, 3)
 
-    # Ejecutar inferencia de prueba
     y_pred_bdst = model_bdst(sample_x)
     print(f"Dimensiones de entrada procesada (sample_x): {sample_x.shape}")
     print(f"Dimensiones de salida de prediccion (BDSTGNN): {y_pred_bdst.shape}")
     print("Estructura esperada: [Batch, Pred_Len, Nodos, 1]")
 
-    # Visualización opcional del grafo estático por correlación
     threshold = 0.4
     g, corr_matrix = create_dgl_graph_from_processed(train_x_true, loc_list, threshold=threshold)
     plot_dgl_graph(g, corr_matrix, loc_list, threshold=threshold)

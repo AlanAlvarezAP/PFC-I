@@ -1,135 +1,153 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import dgl
-import dgl.nn as dglnn
 
-class DGLGCNLayer(nn.Module):
-    """Capa espacial GCN utilizando DGL y pesos de aristas dinámicos (movilidad/grafo)."""
-    def __init__(self, c_in, c_out, dropout):
-        super().__init__()
-        self.gconv = dglnn.GraphConv(c_in, c_out, weight=True, bias=False)
+class nconv(nn.Module):
+    def __init__(self):
+        super(nconv, self).__init__()
+
+    def forward(self, x, A):
+        if len(A.shape) == 2:
+            x = torch.einsum('vw, ncwl->ncvl', A, x)
+        else:
+            x = torch.einsum('nvw, ncwl->ncvl', A, x)
+        return x.contiguous()
+
+class linear(nn.Module):
+    def __init__(self, c_in, c_out):
+        super(linear, self).__init__()
+        self.mlp = torch.nn.Conv2d(c_in, c_out, kernel_size=(1, 1), padding=(0,0), stride=(1,1), bias=True)
+
+    def forward(self, x):
+        return self.mlp(x)
+
+class gcn(nn.Module):
+    def __init__(self, c_in, c_out, dropout, support_len=2, order=1):
+        super(gcn, self).__init__()
+        self.nconv = nconv()
+        c_in = (order * support_len) * c_in
+        self.mlp = linear(c_in, c_out)
         self.dropout = dropout
+        self.order = order
 
-    def forward(self, x, num_nodes, mob_weights):
-        """
-        x: [Batch, Channels, Nodes, Time]
-        mob_weights: [Batch, Nodes, Nodes] o matriz de adyacencia
-        """
-        B, C, N, T = x.shape
-        device = x.device
-        outputs = []
+    def forward(self, x, support):
+        out = []
+        for a in support:
+            x1 = self.nconv(x, a)
+            out.append(x1)
+            for k in range(2, self.order + 1):
+                x2 = self.nconv(x1, a)
+                out.append(x2)
+                x1 = x2
 
-        for t in range(T):
-            xt = x[:, :, :, t].permute(0, 2, 1) # [B, N, C]
-            batch_res = []
-            for b in range(B):
-                # 1. Obtener la adyacencia del batch actual
-                adj_b = mob_weights[b] if len(mob_weights.shape) == 3 else mob_weights
-                
-                # 2. Forzar de manera radical a que tenga exactamente 2 dimensiones [N, N]
-                while adj_b.dim() > 2:
-                    adj_b = adj_b.squeeze(0) # Elimina dimensiones de tamaño 1 si existieran
-                
-                if adj_b.shape != (num_nodes, num_nodes):
-                    # Si por alguna razón la forma no coincide, recortar a los últimos N nodos
-                    adj_b = adj_b[-num_nodes:, -num_nodes:]
+        h = torch.cat(out, dim=1)
+        h = self.mlp(h)
+        h = F.dropout(h, self.dropout, training=self.training)
+        return h
 
-                # En este punto adj_b es 100% una matriz de [N, N]
-                src, dst = torch.nonzero(adj_b, as_tuple=True)
-                weights = adj_b[src, dst]
-                
-                g_dyn = dgl.graph((src, dst), num_nodes=N).to(device)
-                g_dyn.edata['weight'] = weights
-                
-                res = self.gconv(g_dyn, xt[b], edge_weight=g_dyn.edata['weight'])
-                batch_res.append(res)
-                
-            out_t = torch.stack(batch_res, dim=0).permute(0, 2, 1) # [B, C_out, N]
-            outputs.append(out_t)
-            
-        h = torch.stack(outputs, dim=-1) # [B, C_out, N, T]
-        return F.dropout(h, self.dropout, training=self.training)
-    
-class STCellCore(nn.Module):
-    """Bloque de Capas Espacio-Temporales adaptado para manejar tensores 4D con Conv2d/Conv1d."""
-    def __init__(self, num_nodes, dropout, in_dim, residual_channels, dilation_channels, kernel_size, blocks, layers):
-        super().__init__()
-        self.num_nodes = num_nodes
+class stcell_core(nn.Module):
+    def __init__(self, num_nodes, dropout, in_dim, residual_channels, dilation_channels, skip_channels, kernel_size, blocks, layers):
+        super(stcell_core, self).__init__()
+        self.dropout = dropout
         self.blocks = blocks
         self.layers = layers
-        
+        self.num_nodes = num_nodes
         self.filter_convs = nn.ModuleList()
         self.gate_convs = nn.ModuleList()
+        self.residual_convs = nn.ModuleList()
         self.skip_convs = nn.ModuleList()
+        self.ln = nn.ModuleList()
         self.gconv = nn.ModuleList()
         
-        # Usamos Conv2d con kernel_size=(1, kernel_size) tal como el Graph-WaveNet/MepoGNN original
-        # para operar de forma segura sobre [Batch, Channels, Nodes, Time] sin errores de dimensiones.
-        self.start_conv = nn.Conv2d(in_channels=in_dim, out_channels=residual_channels, kernel_size=(1, 1))
+        self.start_conv = nn.Conv2d(in_channels=in_dim, out_channels=residual_channels, kernel_size=(1,1))
+        receptive_field = 1
+        self.supports_len = 2
 
         for b in range(blocks):
+            additional_scope = 1
             new_dilation = 1
             for i in range(layers):
-                self.filter_convs.append(nn.Conv2d(residual_channels, dilation_channels, kernel_size=(1, kernel_size), dilation=(1, new_dilation), padding=(0, 0)))
-                self.gate_convs.append(nn.Conv2d(residual_channels, dilation_channels, kernel_size=(1, kernel_size), dilation=(1, new_dilation), padding=(0, 0)))
-                self.skip_convs.append(nn.Conv2d(dilation_channels, residual_channels, kernel_size=(1, 1)))
+                self.filter_convs.append(nn.Conv1d(residual_channels, dilation_channels, kernel_size=kernel_size, dilation=new_dilation))
+                self.gate_convs.append(nn.Conv1d(residual_channels, dilation_channels, kernel_size=kernel_size, dilation=new_dilation))
+                self.residual_convs.append(nn.Conv1d(dilation_channels, residual_channels, kernel_size=1))
+                self.skip_convs.append(nn.Conv1d(dilation_channels, skip_channels, kernel_size=1))
                 
                 new_dilation *= 2
-                self.gconv.append(DGLGCNLayer(dilation_channels, residual_channels, dropout))
+                receptive_field += additional_scope
+                additional_scope *= 2
+                
+                self.ln.append(nn.LayerNorm([residual_channels, num_nodes, (2 ** layers - 1) * blocks + 2 - receptive_field]))
+                self.gconv.append(gcn(dilation_channels, residual_channels, dropout, support_len=self.supports_len))
 
-    def forward(self, input, mob_weights):
-        """
-        input: [B, C, N, T]
-        mob_weights: [B, N, N]
-        """
-        x = self.start_conv(input)
+        self.receptive_field = receptive_field
+
+    def forward(self, input, adp_g):
+        B, C, N, T = input.shape
+        in_len = T
         
+        if in_len < self.receptive_field:
+            x = nn.functional.pad(input, (self.receptive_field - in_len, 0, 0, 0))
+        else:
+            x = input
+            
+        x = self.start_conv(x)
+        skip = 0
+
         for i in range(self.blocks * self.layers):
             res = x
-            
-            # Manejo de padding temporal para evitar desajustes de tamaño en el tiempo (T)
-            # Como kernel_size=2 y dilation varía, rellenamos a la izquierda en el eje temporal
-            pad_len = x.size(3) - F.pad(x, (1, 0)).size(3) # simplificado o padding dinámico
-            x_padded = F.pad(x, (1, 0)) # Padding a lo largo de la dimensión temporal T
-            
-            filter = torch.tanh(self.filter_convs[i](x_padded))
-            gate = torch.sigmoid(self.gate_convs[i](x_padded))
-            x_conv = filter * gate
+            _, c_res, n_nodes, t_steps = x.shape
+            x_flat = x.permute(0, 2, 1, 3).reshape(B * n_nodes, c_res, t_steps)
 
-            # Aplicar convolución espacial DGL-GCN utilizando los pesos del grafo
-            x_gcn = self.gconv[i](x_conv, self.num_nodes, mob_weights)
+            filter_out = torch.tanh(self.filter_convs[i](x_flat))
+            gate_out = torch.sigmoid(self.gate_convs[i](x_flat))
+            x_conv = filter_out * gate_out
+
+            t_out = x_conv.shape[-1]
+            x_conv = x_conv.reshape(B, n_nodes, -1, t_out).permute(0, 2, 1, 3)
+
+            s = x_conv
+            s_flat = s.permute(0, 2, 1, 3).reshape(B * n_nodes, s.shape[1], t_out)
+            s_skip = self.skip_convs[i](s_flat)
+            s_skip = s_skip.reshape(B, n_nodes, -1, s_skip.shape[-1]).permute(0, 2, 1, 3)
+
+            try:
+                skip = torch.cat((s_skip, skip[:, :, :, -s_skip.size(3):]), dim=1)
+            except:
+                skip = s_skip
+
+            x_gcn = self.gconv[i](x_conv, adp_g)
+
+            try:
+                dense = dense[:, :, :, -x_gcn.size(3):]
+            except:
+                dense = 0
             
-            # Ajuste residual de dimensiones si es necesario
-            if res.shape[-1] == x_gcn.shape[-1]:
-                x = x_gcn + res[:, :, :, -x_gcn.size(3):]
-            else:
-                x = x_gcn
+            res_sliced = res[:, :, :, -x_gcn.size(3):]
+            dense = res_sliced + dense
 
-        return x  # Representaciones latentes de las capas ST
+            gate = torch.sigmoid(x_gcn)
+            x_next = x_gcn * gate + dense * (1 - gate)
+            
+            x = self.ln[i](x_next)
 
+        return skip
+    
 class MepoGNNCore(nn.Module):
-    """Modelo base que solo procesa entrada, grafo y capas ST."""
-    def __init__(self, num_nodes, in_dim=4, residual_channels=32, dilation_channels=32):
+    def __init__(self, num_nodes, in_dim=4, in_len=14, out_len=14):
         super().__init__()
-        self.st_cell = STCellCore(
-            num_nodes=num_nodes, dropout=0.5, in_dim=in_dim, 
-            residual_channels=residual_channels, dilation_channels=dilation_channels, 
-            kernel_size=2, blocks=2, layers=3
-        )
+        self.stcell = stcell_core(num_nodes=num_nodes, dropout=0.5, in_dim=in_dim, skip_channels=256, kernel_size=2, blocks=2, layers=3, residual_channels=32, dilation_channels=32)
+        self.inc_init = nn.Parameter(torch.empty(out_len, in_len), requires_grad=True)
+        nn.init.normal_(self.inc_init, 1, 0.01)
 
-    def forward(self, x_node, od_matrix):
-        """
-        x_node: [Batch, T, N, Features] 
-        od_matrix: [Batch, N, N] o [Batch, T, N, N]
-        """
-        # Adaptar dimensiones al formato requerido por Graph-WaveNet/MepoGNN: [B, C, N, T]
-        x_in = x_node.permute(0, 3, 2, 1)
+    def forward(self, x_node, od):
+        x_node_permuted = x_node.permute(0, 3, 2, 1)
+        incidence = torch.softmax(self.inc_init, dim=1)
+        mob = torch.einsum('kl,blnmc->bknmc', incidence, od).squeeze(-1)
         
-        if len(od_matrix.shape) == 4:
-            mob_weights = od_matrix.mean(dim=1) # [B, N, N]
-        else:
-            mob_weights = od_matrix
+        g = mob.mean(1)
+        g_t = g.permute(0, 2, 1)
+        
+        g_dyn = [g / g.sum(2, True), g_t / g_t.sum(2, True)]
 
-        h_st = self.st_cell(x_in, mob_weights)
+        h_st = self.stcell(x_node_permuted, g_dyn)
         return h_st

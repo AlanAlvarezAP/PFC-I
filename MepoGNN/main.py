@@ -88,41 +88,26 @@ def main():
     split_ratio = (6, 1, 1)
     corr_threshold = 0.5
 
-    dataloaders, static_commute_graph = process_mepognn_pipeline(
-        obs_len=obs_len, pred_len=pred_len, split_ratio=split_ratio, 
-        batch_size=batch_size, device=device, verbose=True
-    )
+    dataloaders, static_commute_graph = process_mepognn_pipeline(obs_len=obs_len, pred_len=pred_len, split_ratio=split_ratio, batch_size=batch_size, device=device, verbose=True)
 
     x_od_b, x_node_b, x_sir_b, y_b = next(iter(dataloaders['train']))
+    x_od_b = x_od_b.to(device)
+    x_node_b = x_node_b.to(device)
 
     print("\n" + "=" * 60)
-    print("-------- AVANCE 1: VERIFICACION DE TENSORES Mepognn ------------")
-    print("=" * 60)
     print(f"Flujo OD Dinamico (x_od) : {x_od_b.shape} -> [Batch, Obs_Len, Nodos, Nodos]")
     print(f"Atributos Nodos (x_node) : {x_node_b.shape} -> [Batch, Obs_Len, Nodos, Feats]")
 
-    # --- NUEVO: INTEGRACIÓN DEL MODELO NEURONAL CORE ---
     num_nodes = x_node_b.shape[2]
     in_feats = x_node_b.shape[-1]
 
     print("\n" + "=" * 60)
-    print("-------- AVANCE 2: PROPAGACION EN CAPAS ST (MepoGNN) --------")
-    print("=" * 60)
     
-    # Instanciar el modelo core
-    model_mepo = MepoGNNCore(
-        num_nodes=num_nodes, 
-        in_dim=in_feats, 
-        residual_channels=32, 
-        dilation_channels=32
-    ).to(device)
-
-    # Pasar el batch por el modelo (Entrada: Atributos de nodos y matriz de movilidad OD)
+    model_mepo = MepoGNNCore(num_nodes=num_nodes,in_dim=in_feats,in_len=obs_len, out_len=pred_len).to(device)
     h_st_mepo = model_mepo(x_node_b, x_od_b)
     print(f"Salida exitosa de las capas ST (H_ST): {h_st_mepo.shape}")
-    print("Estructura esperada: [Batch, Channels, Nodos, Time]")
+    print("Estructura esperada: [Batch, Skip_Channels, Nodos, Time]")
 
-    # (Opcional: puedes mantener tu visualizador de grafo DGL estático aquí si deseas)
     raw_data = load_raw_data()
     raw_cases = raw_data['y'].squeeze()
     node_labels = raw_data['locations']
