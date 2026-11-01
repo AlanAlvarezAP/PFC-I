@@ -118,3 +118,5 @@ def process_mepognn_pipeline(obs_len=14, pred_len=14, split_ratio=(6, 1, 1), bat
     commute_graph = torch.from_numpy(raw_data['commute']).float().to(device)
     
     return dataloaders, commute_graph
+
+loc_list = [f"N-{i:02d}" for i in range(47)]
