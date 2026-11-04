@@ -17,7 +17,7 @@ from metrics import MAE,RMSE,MAPE,CCC,PCC
 from data.dataParser import data_processing_japan, df_japan, loc_list, loc_col
 from model.BDSTGNN import BDSTGNNWithDGL, check_dgl_parity
 
-WINDOW_SIZES = [5, 10, 15]
+WINDOW_SIZES = [5, 10, 15, 20]
 PLOT_GRAPH = False
 SEED = 1234
 OUTPUT_DIR = "results"
@@ -114,11 +114,18 @@ def run_experiment(L, device, plot_graph=False):
     torch.manual_seed(SEED); np.random.seed(SEED)
     if torch.cuda.is_available(): torch.cuda.manual_seed_all(SEED)
 
-    history_window = L
+    history_window = 5
     pred_window = L
-    slide_step = L
-    test_window = max(30, 2 * L)
-    valid_window = max(30, 2 * L)
+
+    # El fragmento del paper no especifica el paso.
+    # Conservamos 5, como en el ejemplo del repositorio.
+    slide_step = 5
+
+    total_days = df_japan['date'].nunique()
+
+    valid_window = int(total_days * 0.20)
+    test_window = int(total_days * 0.20)
+    # El parser asigna los días restantes al entrenamiento.
 
     print("\n" + "#"*85)
     print(f"#  EXPERIMENTO  L = {L}  (history={history_window}, pred={pred_window}, slide={slide_step})")

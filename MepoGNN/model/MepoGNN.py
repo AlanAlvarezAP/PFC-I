@@ -113,7 +113,7 @@ class MepoGNNComplete(nn.Module):
         else:
             raise NotImplementedError('glm_type debe ser Adaptive o Dynamic')
 
-    def forward(self, x_node, SIR, od=None, max_od=None):
+    def forward(self, x_node, SIR, od=None, max_od=None, return_active=False):
         x = x_node.permute(0, 3, 2, 1)
         if self.glm_type == 'Adaptive':
             mob = torch.exp(torch.relu(self.g_rescaled * self.max_log))
@@ -130,10 +130,16 @@ class MepoGNNComplete(nn.Module):
         param_b = torch.sigmoid(self.end_conv_b2(F.relu(self.end_conv_b1(F.relu(skip)))))
         param_g = torch.sigmoid(self.end_conv_g2(F.relu(self.end_conv_g1(F.relu(skip)))))
         outs, cur = [], SIR[:, -1, ...]
+        active_outs = [] if return_active else None
         for i in range(self.out_len):
             nsir = self.SIRcell(param_b[:, i, ...], param_g[:, i, ...], mob_at(i), cur)
             cur = nsir[..., 1:]
             outs.append(nsir[..., [0]])
-        return torch.stack(outs, dim=1)
+            if return_active:
+                active_outs.append(nsir[..., [2]])
+        pred_new = torch.stack(outs, dim=1)
+        if return_active:
+            return pred_new, torch.stack(active_outs, dim=1)
+        return pred_new
 
 MepoGNNCore = MepoGNNComplete

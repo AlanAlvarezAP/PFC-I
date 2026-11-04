@@ -64,7 +64,7 @@ class BDSTGNNWithDGL(nn.Module):
         self.fc_res = nn.Linear(hidden_dim, hidden_dim)
         self.fc_trend = nn.Linear(hidden_dim, hidden_dim)
 
-        self.nodevec = nn.Parameter(torch.empty(num_nodes, 10))
+        self.nodevec = nn.Parameter(torch.empty(num_nodes, 32))
         nn.init.xavier_uniform_(self.nodevec)
         layers, prev = [], hidden_dim
         for i, c in enumerate(tcn_channels):

@@ -1,0 +1,21 @@
+services:
+  experimento:
+    image: epidemias-gnn:cpu
+    platform: linux/amd64
+    build:
+      context: .
+      args:
+        TORCH_INDEX: https://download.pytorch.org/whl/cpu
+        DGL_VERSION: "2.1.0"
+        DGL_WHEELS: https://data.dgl.ai/wheels/repo.html
+    stdin_open: true
+    tty: true
+    environment:
+      DEVICE: cpu
+      PESOS_DIR: /app/pesos
+      RESULTADOS_DIR: /app/resultados_comparacion
+    volumes:
+      - ./BDSTGNN/data:/app/BDSTGNN/data:ro
+      - ./MepoGNN/data:/app/MepoGNN/data:ro
+      - ./pesos:/app/pesos
+      - ./resultados_comparacion:/app/resultados_comparacion

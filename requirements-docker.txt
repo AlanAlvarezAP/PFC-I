@@ -1,0 +1,10 @@
+numpy==1.26.4
+pandas==2.2.2
+scipy==1.12.0
+matplotlib==3.8.4
+networkx==3.2.1
+torchdata==0.7.1
+PyYAML==6.0.2
+psutil==5.9.8
+requests==2.32.3
+tqdm==4.66.5
