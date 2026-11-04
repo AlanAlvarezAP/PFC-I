@@ -43,5 +43,41 @@ Para la instalación y compilación respectiva del repositorio y ejecución de l
 
 Disfruta :D!!!
 
-**Con Docker**
-*Pronto...*
+### Ejecutar la comparación con Docker
+
+Abre Docker Desktop y una terminal en la raíz del repositorio, donde se encuentra `compose.yaml`. Las carpetas `BDSTGNN/data/` y `MepoGNN/data/` deben contener los datasets del proyecto.
+
+**Con GPU NVIDIA**, construye la imagen y abre el menú:
+
+```powershell
+docker compose -f compose.yaml -f compose.gpu.yaml build
+docker compose -f compose.yaml -f compose.gpu.yaml run --rm experimento
+```
+
+**Con CPU**, utiliza estos comandos:
+
+```powershell
+docker compose build
+docker compose run --rm experimento
+```
+
+`build` prepara el entorno. Solo necesitas repetirlo cuando cambies el código incluido en la imagen, el `Dockerfile` o las dependencias. `run` ejecuta `comparar_activos.py` y abre el siguiente menú:
+
+| Opción | Acción |
+|---|---|
+| 1 | Entrena ambos modelos desde cero, guarda sus pesos y evalúa. |
+| 2 | Carga los pesos guardados y evalúa ambos modelos. |
+| 3 | Entrena ambos modelos desde cero y guarda sus pesos. |
+| 4 | Revisa las fechas, regiones y ventanas disponibles. |
+| 0 | Sale del programa. |
+
+En la primera ejecución, elige **1** para generar los pesos y obtener las métricas. En las siguientes, elige **2** para repetir la evaluación sin entrenar. Las opciones **1** y **3** reemplazan los pesos anteriores.
+
+Los checkpoints se guardan en `pesos/` y las predicciones y métricas en `resultados_comparacion/`. Ambas carpetas permanecen en el equipo al cerrar el contenedor.
+
+La comparación externa evalúa del **1 de julio al 5 de septiembre de 2022**, con 14 días de historia y 14 de predicción. Compara los activos predichos directamente por BDSTGNN con los activos derivados de MepoGNN Adaptive. Para reproducir las pruebas originales de cada paper, ejecuta el `main.py` de la carpeta del modelo siguiendo la instalación manual.
+
+### Archivos ignorados
+
+- `.gitignore` excluye del control de versiones los entornos virtuales, la caché de Python, los pesos y los resultados generados.
+- `.dockerignore` limita los archivos que se envían al construir la imagen. Al ejecutar el programa, Docker lee los datasets desde las carpetas locales montadas por Compose.
