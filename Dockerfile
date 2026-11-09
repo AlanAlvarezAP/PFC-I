@@ -13,7 +13,7 @@ RUN python -m pip install --no-cache-dir -r requirements-docker.txt && python -m
 
 COPY BDSTGNN/ ./BDSTGNN/
 COPY MepoGNN/ ./MepoGNN/
-COPY comparar_activos.py datos_y_metricas.py ./
+COPY comparar_activos.py datos_y_metricas.py graficar_comparacion.py ./
 
 RUN python -m pip install --no-cache-dir "pydantic==2.10.6"
 ENTRYPOINT ["python", "comparar_activos.py"]

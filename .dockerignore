@@ -3,6 +3,7 @@
 !requirements-docker.txt
 !comparar_activos.py
 !datos_y_metricas.py
+!graficar_comparacion.py
 !BDSTGNN/model/BDSTGNN.py
 !BDSTGNN/data/dataParser.py
 !MepoGNN/model/MepoGNN.py
