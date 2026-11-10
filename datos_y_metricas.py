@@ -2,19 +2,21 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+
 def check(ok, message):
     if not ok:
         raise ValueError(message)
 
 def metric_values(p, y):
     p, y = np.asarray(p, dtype=float).ravel(), np.asarray(y, dtype=float).ravel()
+
+    check(p.shape == y.shape and np.isfinite(p).all() and np.isfinite(y).all(), 'Predicciones/verdad inválidas')
     e = p-y
     vy = y.var()
     vp = p.var()
     cov = ((p-p.mean())*(y-y.mean())).mean()
 
-    nz = y != 0
-    den = np.abs(y)+np.abs(p)
+    nz = y != 0; den = np.abs(y)+np.abs(p)
     cden = vy+vp+(y.mean()-p.mean())**2
     return {'MAE': float(np.abs(e).mean()), 'RMSE': float(np.sqrt((e**2).mean())),
             'MAPE_nonzero_pct': float(100*np.abs(e[nz]/y[nz]).mean()) if nz.any() else np.nan,
@@ -33,27 +35,25 @@ def origins(dates, start, end, history, horizon, stride):
 
     return ix
 
-def read_csv_external(path, names, start, end, history):
+def read_csv_external(path, names, start, end, history, fill_missing=False):
     df=pd.read_csv(path)
-    cols=['date','administrative_area_level','administrative_area_level_2','confirmed','recovered','deaths','population']
-
     df['date']=pd.to_datetime(df['date'])
     c='administrative_area_level_2'
     df=df[(df.administrative_area_level==2)&df[c].isin(names)].copy()
 
     dates=pd.date_range(pd.Timestamp(start)-pd.Timedelta(days=history),end)
     df=df[df.date.isin(dates)]
-
     full=pd.MultiIndex.from_product([dates,names],names=['date',c])
     indexed=df.set_index(['date',c])
     indexed=indexed.reindex(full)
-
     vals=indexed[['confirmed','recovered','deaths','population']].to_numpy(float)
+
+    if fill_missing:
+        vals[:, 1:3] = np.nan_to_num(vals[:, 1:3], nan=0.0)
 
     confirmed,recovered,deaths,pop=(vals[:,i].reshape(len(dates),len(names)) for i in range(4))
     active=np.maximum(confirmed-recovered-deaths,0)
     removed=confirmed-active; susceptible=pop-confirmed
-
     return dates,np.stack([active,removed,susceptible],axis=-1),pop
 
 def export_report(out, model, target, p, y, dates, ids, names):
@@ -71,7 +71,7 @@ def export_report(out, model, target, p, y, dates, ids, names):
     pd.DataFrame(data,columns=['origin_date','target_date','horizon','location','y_true','y_pred']).to_csv(out/f'{model}_predictions.csv',index=False)
     print(model, target, rows[0],flush=True)
 
-def prepare_mepo_csv(root, csv_path, start, end, history=15):
+def prepare_mepo_csv(root, csv_path, start, end, history=15, flexible=False):
     df=pd.read_csv(csv_path)
     df=df[(df.administrative_area_level==2)&df.jis_code.between(1,47)].copy()
     mapping=df.groupby('administrative_area_level_2').jis_code.agg(['min','max'])
@@ -82,14 +82,13 @@ def prepare_mepo_csv(root, csv_path, start, end, history=15):
     hist_dates=pd.date_range('2020-04-01',periods=len(raw['node']))
 
     node=raw['node'];sir=raw['SIR']
-
     cumulative=df.pivot(index='date',columns='administrative_area_level_2',values='confirmed').reindex(columns=names).sort_index()
     historic_inc=cumulative.diff().reindex(hist_dates.strftime('%Y-%m-%d')).to_numpy()
     corr=np.corrcoef(historic_inc.T,node[...,0].T)[:47,47:]
-
-    dates,irs,pop=read_csv_external(csv_path,names,start,end,history)
+    dates,irs,pop=read_csv_external(csv_path,names,start,end,history,fill_missing=flexible)
     confirmed=cumulative.reindex(dates.strftime('%Y-%m-%d')).to_numpy()
     daily=np.diff(confirmed,axis=0);dates=dates[1:];irs=irs[1:];pop=pop[1:]
+    if flexible: daily=np.clip(daily,0,None)
 
     sir_test=irs[..., [2,0,1]].astype(np.float32)
     node_test=np.stack([daily,np.broadcast_to(dates.dayofweek.to_numpy()[:,None],daily.shape),daily/(irs[...,0]+1)],axis=-1).astype(np.float32)

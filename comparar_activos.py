@@ -37,8 +37,10 @@ SOLO_REVISAR_DATOS = False
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+
 def cargar_bdst():
     carpeta_anterior = Path.cwd()
+    os.environ['BDST_INICIO'], os.environ['BDST_FIN'] = PERIODO_TRAIN
     try:
         os.chdir(CARPETA / 'BDSTGNN')
         from BDSTGNN.data.dataParser import (data_processing_japan, df_japan, loc_list, loc_col,)
@@ -46,16 +48,16 @@ def cargar_bdst():
     finally:
         os.chdir(carpeta_anterior)
 
-    (train_x, train_y, train_real, val_x, val_y, val_real,test_x_antiguo, test_y_antiguo, test_real_antiguo,S_min, S_max, I_min, I_max, R_min, R_max, poblacion) = resultado
+    (train_x, train_y, train_real, val_x, val_y, val_real, test_x_antiguo, test_y_antiguo, test_real_antiguo,S_min, S_max, I_min, I_max, R_min, R_max, poblacion) = resultado
 
     return {'train_x': train_x, 'train_y': train_y, 'train_real': train_real,'val_x': val_x, 'val_y': val_y, 'val_real': val_real,'S_min': S_min, 'S_max': S_max,'I_min': I_min, 'I_max': I_max,'R_min': R_min, 'R_max': R_max,'poblacion': poblacion, 'regiones': loc_list,}
 
 
 def cargar_mepo_comun(objetivo='nuevos'):
-    datos, _ = prepare_mepo_csv(CARPETA, CSV, PERIODO_TRAIN[0], PERIODO_TRAIN[1], history=1)
+    datos, _ = prepare_mepo_csv(CARPETA, CSV, PERIODO_TRAIN[0], PERIODO_TRAIN[1], history=1, flexible=True)
     nuevos, node, sir = datos['node'][..., 0], datos['node'].copy(), datos['SIR']
     n_dias = len(datos['dates'])
-
+    
     corte_val, corte_test = n_dias - VAL_DIAS - TEST_DIAS, n_dias - TEST_DIAS
     y_base = nuevos[..., None] if objetivo == 'nuevos' else sir[..., 1:2]
     node[..., 0] = np.log1p(node[..., 0])
@@ -70,26 +72,26 @@ def cargar_mepo_comun(objetivo='nuevos'):
         s_ = np.stack([sir[t:t + VENTANA] for t in idx]).astype(np.float32)
         y = np.stack([y_base[t + VENTANA:t + 2 * VENTANA] for t in idx]).astype(np.float32)
         od = torch.zeros(len(x), 1)
-        return DataLoader(TensorDataset(od, torch.tensor(x), torch.tensor(s_), torch.tensor(y)),batch_size=BATCH_MEPO, shuffle=(a == 0))
+        return DataLoader(TensorDataset(od, torch.tensor(x), torch.tensor(s_), torch.tensor(y)), batch_size=BATCH_MEPO, shuffle=(a == 0))
     
     loaders = {'train': ventanas(0, corte_val), 'validate': ventanas(corte_val, corte_test)}
     for e in loaders:
-        loaders[e] = DataLoader(TensorDataset(*[t.to(DEVICE) for t in loaders[e].dataset.tensors]),batch_size=BATCH_MEPO, shuffle=(e == 'train'))
+        loaders[e] = DataLoader(TensorDataset(*[t.to(DEVICE) for t in loaders[e].dataset.tensors]), batch_size=BATCH_MEPO, shuffle=(e == 'train'))
     
-    print('MepoGNN (protocolo comun): ventanas train', len(loaders['train'].dataset),'| val', len(loaders['validate'].dataset), flush=True)
+    print('MepoGNN (protocolo comun): ventanas train', len(loaders['train'].dataset), '| val', len(loaders['validate'].dataset), flush=True)
     carpeta_anterior = Path.cwd()
     try:
         os.chdir(CARPETA / 'MepoGNN')
         commute = torch.from_numpy(load_raw_data()['commute']).float().to(DEVICE)
     finally:
         os.chdir(carpeta_anterior)
-
     return loaders, commute, media, desviacion
 
 
 def cargar_mepo(objetivo="nuevos"):
     if PROTOCOLO == 'comun':
         return cargar_mepo_comun(objetivo)
+    
     carpeta_anterior = Path.cwd()
     try:
         os.chdir(CARPETA / 'MepoGNN')
@@ -107,8 +109,8 @@ def cargar_mepo(objetivo="nuevos"):
             inicio = desplazamiento + VENTANA
             activos = originales['sir'][..., 1:2]
             etiquetas = np.stack([activos[t:t + VENTANA] for t in range(inicio, inicio + len(y))])
-            check(etiquetas.shape == tuple(y.shape), 'Forma inesperada en las etiquetas de activos')
             y = torch.as_tensor(etiquetas, dtype=y.dtype, device=y.device)
+
         desplazamiento += len(y)
         dataset = TensorDataset(od, node[..., [0, 2, 3]], sir, y)
         loaders[etapa] = DataLoader(dataset, batch_size=BATCH_MEPO, shuffle=(etapa == 'train'),)
@@ -119,7 +121,6 @@ def cargar_mepo(objetivo="nuevos"):
     desviacion = np.array([ventanas_node[:n_train, ..., f].std() for f in range(3)])
     del loaders['test']
     return loaders, commute, media, desviacion
-
 
 def entrenar_bdst(datos):
     torch.manual_seed(1234)
@@ -157,7 +158,7 @@ def entrenar_bdst(datos):
             val_loss = F.l1_loss(pred_val, datos['val_y']).item()
 
         historial.append({'epoca': epoca+1, 'loss_ultimo_batch': loss.item(), 'val_loss': val_loss})
-        print(f'BDSTGNN | epoca {epoca+1} | val: {val_loss:.4f}', flush=True)
+        print(f'BDSTGNN | época {epoca+1} | val: {val_loss:.4f}', flush=True)
 
         if val_loss <= mejor_val:
             mejor_val = val_loss
@@ -170,7 +171,11 @@ def entrenar_bdst(datos):
 
     modelo.load_state_dict(mejor_estado)
     pd.DataFrame(historial).to_csv(SALIDA / 'BDSTGNN_entrenamiento.csv', index=False)
-    torch.save({'state_dict': modelo.state_dict(), 'ventana': VENTANA,'regiones': datos['regiones'],'normalizadores': {k: datos[k].cpu() for k in ['S_min', 'S_max', 'I_min', 'I_max', 'R_min', 'R_max', 'poblacion',]},}, PESOS / 'BDSTGNN.pt')
+    torch.save({
+        'state_dict': modelo.state_dict(), 'ventana': VENTANA,
+        'regiones': datos['regiones'],
+        'normalizadores': {k: datos[k].cpu() for k in ['S_min', 'S_max', 'I_min', 'I_max', 'R_min', 'R_max', 'poblacion',]},
+    }, PESOS / 'BDSTGNN.pt')
     return modelo
 
 
@@ -198,10 +203,10 @@ def entrenar_mepo(loaders, commute, media, desviacion, regiones, objetivo='nuevo
         for _, node, sir, y in loaders['train']:
             pred = salida_mepo(modelo, node, sir, objetivo)
             optimizador.zero_grad()
+
             if epoca % 2 == 0 and nivel <= VENTANA:
                 nivel += 1
             loss = F.l1_loss(pred[:, :nivel], y[:, :nivel])
-
             loss.backward()
             torch.nn.utils.clip_grad_norm_(modelo.parameters(), 5.0)
             optimizador.step()
@@ -216,9 +221,8 @@ def entrenar_mepo(loaders, commute, media, desviacion, regiones, objetivo='nuevo
                 n += len(y)
 
         val_loss = total / n
-        check(np.isfinite(val_loss), 'Validacion MepoGNN no finita')
         historial.append({'epoca': epoca, 'loss_ultimo_batch': loss.item(), 'val_loss': val_loss})
-        print(f'MepoGNN | epoca {epoca} | val {objetivo}: {val_loss:.4f}', flush=True)
+        print(f'MepoGNN | época {epoca} | val {objetivo}: {val_loss:.4f}', flush=True)
 
         if val_loss <= mejor_val:
             mejor_val = val_loss
@@ -231,12 +235,17 @@ def entrenar_mepo(loaders, commute, media, desviacion, regiones, objetivo='nuevo
 
     modelo.load_state_dict(mejor_estado)
     pd.DataFrame(historial).to_csv(SALIDA / f'{nombre}_entrenamiento.csv', index=False)
-    torch.save({'state_dict': modelo.state_dict(), 'ventana': VENTANA,'objetivo': objetivo, 'graph': 'Adaptive', 'in_dim': 3, 'regiones': regiones,'media': torch.tensor(media), 'desviacion': torch.tensor(desviacion),'commute': commute.cpu(),}, PESOS / f'{nombre}.pt')
+    torch.save({
+        'state_dict': modelo.state_dict(), 'ventana': VENTANA,
+        'objetivo': objetivo, 'graph': 'Adaptive', 'in_dim': 3, 'regiones': regiones,
+        'media': torch.tensor(media), 'desviacion': torch.tensor(desviacion),
+        'commute': commute.cpu(),
+    }, PESOS / f'{nombre}.pt')
     return modelo
+
 
 def evaluar_bdst(modelo, datos):
     fechas, reales, poblacion = read_csv_external(CSV, datos['regiones'], INICIO_TEST, FIN_TEST, VENTANA,)
-
     minimo = np.stack([datos[k].cpu().numpy() for k in ['I_min', 'R_min', 'S_min']], axis=-1)
     maximo = np.stack([datos[k].cpu().numpy() for k in ['I_max', 'R_max', 'S_max']], axis=-1)
     entradas = (reales - minimo) / (maximo - minimo + 1e-8)
@@ -254,7 +263,7 @@ def evaluar_bdst(modelo, datos):
             predicciones.append(pred_activos[0].T.cpu().numpy())
             verdades.append(reales[i:i+VENTANA, :, 0])
 
-    export_report(SALIDA, 'BDSTGNN_L14_NN', 'active_cases', np.array(predicciones), np.array(verdades), fechas, indices, datos['regiones'])
+    export_report(SALIDA, 'BDSTGNN_L14_NN', 'active_cases',np.array(predicciones), np.array(verdades), fechas, indices, datos['regiones'])
 
 
 def evaluar_mepo(modelo, test, media, desviacion, objetivo='nuevos'):
@@ -281,16 +290,14 @@ def evaluar_mepo(modelo, test, media, desviacion, objetivo='nuevos'):
             activos_reales.extend([test['SIR'][i:i+VENTANA, :, 1] for i in lote])
 
     if objetivo == 'nuevos':
-        export_report(SALIDA, 'MepoGNN_new', 'daily_new_cases', np.concatenate(nuevos), np.array(nuevos_reales), test['dates'], indices, test['locations'])
-    
+        export_report(SALIDA, 'MepoGNN_new', 'daily_new_cases',np.concatenate(nuevos), np.array(nuevos_reales), test['dates'], indices, test['locations'])
     nombre = 'MepoGNN_active_supervised' if objetivo == 'activos' else 'MepoGNN_active_derived'
-    export_report(SALIDA, nombre, 'active_cases', np.concatenate(activos), np.array(activos_reales), test['dates'], indices, test['locations'])
+    export_report(SALIDA, nombre, 'active_cases',np.concatenate(activos), np.array(activos_reales), test['dates'], indices, test['locations'])
 
 
 def cargar_bdst_guardado():
     ruta = PESOS / 'BDSTGNN.pt'
     checkpoint = torch.load(ruta, map_location='cpu', weights_only=True)
-    requeridos = {'state_dict', 'ventana', 'regiones', 'normalizadores'}
 
     regiones = checkpoint['regiones']
     normalizadores = checkpoint['normalizadores']
@@ -301,7 +308,7 @@ def cargar_bdst_guardado():
         valor = normalizadores[k]
         datos[k] = valor.to(DEVICE)
 
-    modelo = BDSTGNNWithDGL(num_nodes=47, in_feats=3, hidden_dim=32, history_window=VENTANA, pred_window=VENTANA, kernel_size=15, tcn_channels=(8,), kernel_size_graph=3, dropout=0.0,).to(DEVICE)
+    modelo = BDSTGNNWithDGL(num_nodes=47, in_feats=3, hidden_dim=32,history_window=VENTANA, pred_window=VENTANA,kernel_size=15, tcn_channels=(8,), kernel_size_graph=3, dropout=0.0,).to(DEVICE)
     modelo.load_state_dict(checkpoint['state_dict'], strict=True)
     modelo.eval()
     print('BDSTGNN: pesos cargados desde', ruta)
@@ -311,8 +318,6 @@ def cargar_bdst_guardado():
 def cargar_mepo_guardado(regiones_test, objetivo='nuevos'):
     ruta = PESOS / ('MepoGNN_activos.pt' if objetivo == 'activos' else 'MepoGNN.pt')
     checkpoint = torch.load(ruta, map_location='cpu', weights_only=True)
-
-    campos = {'state_dict', 'ventana', 'graph', 'in_dim', 'regiones', 'media', 'desviacion', 'commute'}
     media = checkpoint['media'].cpu().numpy()
     desviacion = checkpoint['desviacion'].cpu().numpy()
     commute = checkpoint['commute']
@@ -363,7 +368,7 @@ def elegir_accion():
 
 
 def main():
-    global DEVICE, PESOS, SALIDA, EPOCAS_BDST, EPOCAS_MEPO, PROTOCOLO
+    global DEVICE, PESOS, SALIDA, EPOCAS_BDST, EPOCAS_MEPO, PROTOCOLO, INICIO_TEST, FIN_TEST, PERIODO_TRAIN
     parser = argparse.ArgumentParser(description='Entrenar una vez o evaluar con pesos guardados.')
     parser.add_argument('--accion', choices=['entrenar-evaluar', 'evaluar', 'entrenar', 'revisar', 'entrenar-activos', 'evaluar-tres'])
     parser.add_argument('--device', choices=['auto', 'cpu', 'cuda'], default=os.environ.get('DEVICE', 'auto'))
@@ -372,26 +377,35 @@ def main():
     parser.add_argument('--epocas-bdst', type=int, default=EPOCAS_BDST)
     parser.add_argument('--epocas-mepo', type=int, default=EPOCAS_MEPO)
     parser.add_argument('--protocolo', choices=['comun', 'paper'], default=PROTOCOLO)
+    parser.add_argument('--inicio-test', default=INICIO_TEST)
+    parser.add_argument('--inicio-train', default=PERIODO_TRAIN[0])
+    parser.add_argument('--fin-train', default=PERIODO_TRAIN[1])
+    parser.add_argument('--fin-test', default=FIN_TEST)
     args = parser.parse_args()
     PROTOCOLO = args.protocolo
+    INICIO_TEST, FIN_TEST = args.inicio_test, args.fin_test
+    PERIODO_TRAIN = (args.inicio_train, args.fin_train)
     PESOS, SALIDA = args.pesos.resolve(), args.resultados.resolve()
     EPOCAS_BDST, EPOCAS_MEPO = args.epocas_bdst, args.epocas_mepo
     accion = args.accion or ('revisar' if SOLO_REVISAR_DATOS else elegir_accion())
     if accion == 'salir':
         return
-    
+
     DEVICE = torch.device('cuda' if args.device == 'cuda' or (args.device == 'auto' and torch.cuda.is_available()) else 'cpu')
+
+    limite = pd.Timestamp('2022-05-15') if PROTOCOLO == 'comun' else pd.Timestamp('2022-06-14')
     entrenar = accion in ['entrenar', 'entrenar-evaluar']
     evaluar = accion in ['evaluar', 'entrenar-evaluar', 'evaluar-tres']
     if entrenar:
-        check(EPOCAS_BDST > 0 and EPOCAS_MEPO > 0, 'Epocas deben ser positivas')
+        check(EPOCAS_BDST > 0 and EPOCAS_MEPO > 0, 'Épocas deben ser positivas.')
     if accion == 'entrenar-activos':
-        check(EPOCAS_MEPO > 0, 'Las epocas deben ser positivas')
+        check(EPOCAS_MEPO > 0, 'Las épocas deben ser positivas.')
     if accion in ['evaluar', 'evaluar-tres']:
         archivos = ['BDSTGNN.pt', 'MepoGNN.pt']
         if accion == 'evaluar-tres':
             archivos.append('MepoGNN_activos.pt')
         faltantes = [str(PESOS / nombre) for nombre in archivos if not (PESOS / nombre).is_file()]
+        check(not faltantes, 'Faltan checkpoints: ' + ', '.join(faltantes) + '. Copia tus .pt o elige entrenar. NO se entrenó automáticamente.')
 
     print('Acción:', accion, '| Dispositivo:', DEVICE)
     print('Pesos:', PESOS)

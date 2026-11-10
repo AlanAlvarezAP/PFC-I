@@ -34,7 +34,7 @@ def serie(ax, d, h, titulo):
 
 for h in (1, 7, 14):
     fig, ax = plt.subplots(figsize=(11, 4.5))
-    serie(ax, nac, h, 'Casos activos, total Japon')
+    serie(ax, nac, h, 'Casos activos, total Japón')
     ax.set_ylabel('Casos activos'); ax.legend(frameon=False)
     fig.tight_layout(); fig.savefig(G / f'serie_nacional_h{h}.png', dpi=150); plt.close(fig)
 
@@ -56,8 +56,9 @@ for ax, k in zip(axs, ['MAE', 'RMSE', 'MAPE_nonzero_pct', 'R2', 'CCC']):
     b = ax.bar(etq, v, color=cols)
     ax.set_title(k + (' (%)' if 'pct' in k else '')); ax.bar_label(b, fmt='%.2f' if k in ('R2', 'CCC') else '%.0f', fontsize=8)
     ax.tick_params(axis='x', labelsize=7); ax.axhline(0, color='k', lw=.6)
-fig.suptitle('Metricas globales (todos los horizontes) - menor es mejor salvo R2/CCC', fontsize=11)
+fig.suptitle('Métricas globales (todos los horizontes) — menor es mejor salvo R2/CCC', fontsize=11)
 fig.tight_layout(); fig.savefig(G / 'barras_metricas.png', dpi=150); plt.close(fig)
+
 
 mh = met[met.horizon.astype(str) != 'all'].copy(); mh['horizon'] = mh.horizon.astype(int)
 fig, axs = plt.subplots(1, 2, figsize=(12, 4))
@@ -78,6 +79,6 @@ for i, (c, n) in enumerate(MODELOS.items()):
     e = (p[c] - p.real).abs().groupby(p.location).mean().loc[top]
     ax.bar([x + (i - 1) * w for x in range(len(top))], e, w, color=COL[c], label=n)
 ax.set_xticks(range(len(top))); ax.set_xticklabels(top, rotation=30)
-ax.set_title('MAE por prefectura (10 con mas casos activos)'); ax.legend(frameon=False); ax.grid(alpha=.3, axis='y')
+ax.set_title('MAE por prefectura (10 con más casos activos)'); ax.legend(frameon=False); ax.grid(alpha=.3, axis='y')
 fig.tight_layout(); fig.savefig(G / 'barras_mae_prefectura.png', dpi=150); plt.close(fig)
 print('Listo:', sorted(x.name for x in G.iterdir()))

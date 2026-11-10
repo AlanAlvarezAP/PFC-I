@@ -12,6 +12,8 @@ __pycache__/
 
 # Resultados generados al ejecutar los modelos
 /resultados_comparacion/
+/resultados_pico/
+/resultados_rango/
 /BDSTGNN/results/
 /MepoGNN/results/
 

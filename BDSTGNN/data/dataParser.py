@@ -1,3 +1,4 @@
+import os
 import pandas as pd
 import numpy as np
 import torch
@@ -10,7 +11,7 @@ loc_col = 'administrative_area_level_2'
 df_japan = df_japan[~df_japan[loc_col].isin(special_entries)].copy()
 
 df_japan['date'] = pd.to_datetime(df_japan['date'])
-mask = (df_japan['date'] >= '2022-01-15') & (df_japan['date'] <= '2022-06-14')
+mask = (df_japan['date'] >= os.environ.get('BDST_INICIO', '2022-01-15')) & (df_japan['date'] <= os.environ.get('BDST_FIN', '2022-06-14'))
 df_japan = df_japan.loc[mask].copy()
 
 df_japan['recovered'] = df_japan['recovered'].fillna(0)

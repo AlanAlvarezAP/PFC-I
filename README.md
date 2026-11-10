@@ -70,12 +70,13 @@ después de `experimento` se pasa como argumento. Sin argumentos abre un menú
 MepoGNN con activos y **6** para evaluar los tres). Los pesos se guardan en
 `pesos/` y las métricas en `resultados_comparacion/`.
 
-También puedes ejecutar cada paso directamente:
+El menú usa la configuración por defecto (64 ventanas). Para reproducir los
+**resultados principales** (718 ventanas, ver abajo) ejecuta cada paso directamente:
 
 ```powershell
-docker compose -f compose.yaml -f compose.gpu.yaml run --rm experimento --accion entrenar-evaluar --protocolo comun
-docker compose -f compose.yaml -f compose.gpu.yaml run --rm experimento --accion entrenar-activos --protocolo comun
-docker compose -f compose.yaml -f compose.gpu.yaml run --rm experimento --accion evaluar-tres --protocolo comun
+docker compose -f compose.yaml -f compose.gpu.yaml run --rm experimento --accion entrenar-evaluar --protocolo comun --inicio-train 2020-04-01 --fin-train 2022-06-14
+docker compose -f compose.yaml -f compose.gpu.yaml run --rm experimento --accion entrenar-activos --protocolo comun --inicio-train 2020-04-01 --fin-train 2022-06-14
+docker compose -f compose.yaml -f compose.gpu.yaml run --rm experimento --accion evaluar-tres --protocolo comun --inicio-train 2020-04-01 --fin-train 2022-06-14
 ```
 
 **Con CPU**
@@ -83,7 +84,7 @@ docker compose -f compose.yaml -f compose.gpu.yaml run --rm experimento --accion
 ```powershell
 docker compose build
 docker compose run --rm experimento
-docker compose run --rm experimento --accion evaluar-tres --protocolo comun
+docker compose run --rm experimento --accion evaluar-tres --protocolo comun --inicio-train 2020-04-01 --fin-train 2022-06-14
 ```
 
 Solo necesitas repetir `build` si cambias el código incluido en la imagen
@@ -96,22 +97,30 @@ guardados con otro protocolo no son comparables.
 ### Qué experimento ejecuta cada comando
 
 Docker abre `comparar_activos.py`. Este script compara BDSTGNN y MepoGNN
-sobre un test externo del **1 de julio al 5 de septiembre de 2022**
-(54 ventanas), con 14 días de historia y 14 días de predicción
-(horizontes de 1 a 14 días).
+con 14 días de historia y 14 días de predicción (horizontes de 1 a 14 días).
 
-**Protocolo común (por defecto, `--protocolo comun`)**
+**Protocolo común (`--protocolo comun`, por defecto)**
 
-Para comparar únicamente la arquitectura, ambos modelos entrenan con el mismo
-periodo, **2022-01-15 a 2022-06-14**, con el mismo reparto
-(entrenamiento `[:-60]`, validación `[-60:-30]`) y ventanas de 14 días con
-paso 1 (64 ventanas de entrenamiento y 3 de validación). Además comparten
-200 épocas máximas y early stopping con paciencia 15 restaurando el mejor
-checkpoint. Cada modelo conserva su semilla (BDSTGNN 1234, MepoGNN 3) y su
-learning rate original.
+Para comparar únicamente la arquitectura, ambos modelos entrenan con el
+**mismo periodo**, el mismo reparto (entrenamiento `[:-60]`, validación
+`[-60:-30]`, los últimos 30 días quedan reservados) y ventanas de 14 días con
+paso 1. Comparten 200 épocas máximas y early stopping con paciencia 15
+restaurando el mejor checkpoint. Cada modelo conserva su semilla
+(BDSTGNN 1234, MepoGNN 3), su learning rate y su arquitectura originales.
+
+| Configuración | Periodo de entrenamiento | Ventanas train / val | Uso |
+|---|---|---|---|
+| **Principal** (`--inicio-train 2020-04-01 --fin-train 2022-06-14`) | 2020-04-01 a 2022-06-14 | 718 / 3 | resultados presentados |
+| Por defecto (sin opciones) | 2022-01-15 a 2022-06-14 | 64 / 3 | análisis de sensibilidad a la cantidad de datos |
 
 Con `--protocolo paper` cada modelo entrena con sus datos originales
 (BDSTGNN: 2022-01-15 a 2022-06-14; MepoGNN: 2020-04-01 a 2021-09-21).
+
+**Tratamiento de datos en el entrenamiento largo**: recuperados y fallecidos
+nulos se toman como 0 (mismo criterio que el parser de BDSTGNN) y las
+incidencias diarias negativas (correcciones de la fuente) se recortan a 0.
+El parser de BDSTGNN lee el periodo de las variables `BDST_INICIO` y
+`BDST_FIN`, que `comparar_activos.py` fija según `--inicio-train/--fin-train`.
 
 **Modelos comparados en casos activos**
 
@@ -127,10 +136,20 @@ Con `--protocolo paper` cada modelo entrena con sus datos originales
 --accion evaluar-tres       # evalua los tres con los pesos guardados
 ```
 
+Ejemplo sin Docker para los resultados principales:
+
+```powershell
+python comparar_activos.py --accion entrenar-evaluar --protocolo comun --inicio-train 2020-04-01 --fin-train 2022-06-14
+python comparar_activos.py --accion entrenar-activos --protocolo comun --inicio-train 2020-04-01 --fin-train 2022-06-14
+python comparar_activos.py --accion evaluar-tres     --protocolo comun --inicio-train 2020-04-01 --fin-train 2022-06-14
+python comparar_activos.py --accion evaluar-tres     --protocolo comun --inicio-train 2020-04-01 --fin-train 2022-06-14 --inicio-test 2022-05-16 --fin-test 2022-06-14 --resultados resultados_descenso
+```
+
 **Gráficas y CSV consolidados**
 
 ```powershell
 python graficar_comparacion.py
+python graficar_comparacion.py --resultados resultados_descenso
 ```
 
 Con Docker (el entrypoint de la imagen es `comparar_activos.py`, por eso se
@@ -139,6 +158,10 @@ sobrescribe):
 ```powershell
 docker compose run --rm --entrypoint python experimento graficar_comparacion.py
 ```
+
+Para que funcione dentro de Docker, `graficar_comparacion.py` debe estar en la
+imagen: añadir `!graficar_comparacion.py` al `.dockerignore` y copiarlo en el
+`Dockerfile`.
 
 Genera `comparacion_metricas.csv`, `comparacion_diaria_ancha.csv`,
 `comparacion_diaria_nacional.csv` y la carpeta `graficas/` (series de tiempo
